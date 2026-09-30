@@ -52,6 +52,13 @@ function selectApp(query: string, apps: InstalledApp[]): InstalledApp | undefine
   return exact.length === 1 ? exact[0] : undefined;
 }
 
+export type DeterministicExecutor = {
+  execute(
+    route: DeterministicRoute,
+    signal?: AbortSignal
+  ): Promise<DeterministicExecutionResult>;
+};
+
 export function createDeterministicExecutor(
   actions: DesktopActionService = createDesktopActionService(),
   discoverApps: DiscoverApps = discoverInstalledApps,
@@ -62,7 +69,7 @@ export function createDeterministicExecutor(
       return runDesktopCommand(file, args, signal);
     }
   )
-) {
+): DeterministicExecutor {
   return {
     async execute(
       route: DeterministicRoute,

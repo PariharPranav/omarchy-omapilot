@@ -79,6 +79,132 @@ describe("broker lifecycle cleanup", () => {
   });
 });
 
+describe("deterministic broker fast path", () => {
+  it("completes a deterministic command before provider lookup", async () => {
+    const events: BrokerEvent[] = [];
+    const saved: ChatRecord[] = [];
+    const routes: unknown[] = [];
+
+    const history = {
+      save(chat: ChatRecord) {
+        saved.push(chat);
+        return Promise.resolve([]);
+      }
+    } as unknown as HistoryStore;
+
+    const broker = new OmaPilotBroker(events.push.bind(events), {
+      history,
+      deterministicExecutor: {
+        execute(route) {
+          routes.push(route);
+
+          return Promise.resolve({
+            handled: true,
+            message: "Workspace 2.",
+            receipt: {
+              action: "workspace_focus",
+              target: { workspace: 2 },
+              requested: { action: "focus", workspace: 2 },
+              before: undefined,
+              after: { workspace: 2 },
+              changed: true,
+              verified: true
+            }
+          });
+        }
+      }
+    });
+
+    // Deliberately do NOT initialize/discover providers.
+    // If provider lookup happens first, this would fail with provider_unavailable.
+    await broker.handle({
+      type: "submit",
+      id: "local-workspace",
+      question: "workspace 2",
+      provider: "codex"
+    });
+
+    expect(routes).toEqual([
+      {
+        family: "workspace",
+        operation: "focus",
+        workspace: 2
+      }
+    ]);
+
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        type: "error",
+        code: "provider_unavailable"
+      })
+    );
+
+    expect(events).toContainEqual({
+      type: "content",
+      id: "local-workspace",
+      delta: "Workspace 2."
+    });
+
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({
+      provider: "codex",
+      question: "workspace 2",
+      answer: "Workspace 2.",
+      images: [],
+      session: {
+        resumable: false,
+        resumeKind: "transcript"
+      }
+    });
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "complete",
+        chat: expect.objectContaining({
+          question: "workspace 2",
+          answer: "Workspace 2."
+        })
+      })
+    );
+
+    expect(events.at(-1)).toEqual({
+      type: "state",
+      id: "local-workspace",
+      state: "idle"
+    });
+  });
+
+  it("falls through when the deterministic executor declines the route", async () => {
+    const events: BrokerEvent[] = [];
+
+    const broker = new OmaPilotBroker(events.push.bind(events), {
+      deterministicExecutor: {
+        execute() {
+          return Promise.resolve({
+            handled: false,
+            reason: "unsupported_route"
+          });
+        }
+      }
+    });
+
+    await broker.handle({
+      type: "submit",
+      id: "local-decline",
+      question: "workspace 2",
+      provider: "codex"
+    });
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "error",
+        id: "local-decline",
+        code: "provider_unavailable"
+      })
+    );
+  });
+});
+
 describe("dictation generation guard", () => {
   it("discards a late stop result after cancellation", async () => {
     const events: BrokerEvent[] = [];

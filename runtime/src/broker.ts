@@ -32,6 +32,11 @@ import {
   setCapabilityEnabled,
   setFilesRoot
 } from "./capabilities/index.js";
+import { matchDeterministicRoute } from "./deterministic-router.js";
+import {
+  createDeterministicExecutor,
+  type DeterministicExecutor
+} from "./deterministic-executor.js";
 
 type DictationClient = Pick<DictationService, "start" | "stop" | "cancel">;
 type SessionCleaner = (provider: DiscoveredProvider, sessionId: string) => Promise<boolean>;
@@ -66,6 +71,8 @@ export class OmaPilotBroker {
   readonly #permissionTimeoutMs: number;
   readonly #contextAttachments: ContextAttachmentStore;
   readonly #browserCompanion: BrowserCompanionServer;
+  readonly #deterministicMatcher: typeof matchDeterministicRoute;
+  readonly #deterministicExecutor: DeterministicExecutor;
   #providers = new Map<string, DiscoveredProvider>();
   #runs = new Map<string, AcpRun>();
   #handoffs = new Map<string, Promise<void>>();
@@ -80,7 +87,7 @@ export class OmaPilotBroker {
 
   constructor(
     emit: (event: BrokerEvent) => void,
-    options: { history?: HistoryStore; images?: ImageStore; contextAttachments?: ContextAttachmentStore; dictation?: DictationClient; voice?: VoiceService; sessionCleaner?: SessionCleaner; herdrContinue?: HerdrContinue; env?: NodeJS.ProcessEnv; permissionTimeoutMs?: number } = {}
+    options: { history?: HistoryStore; images?: ImageStore; contextAttachments?: ContextAttachmentStore; dictation?: DictationClient; voice?: VoiceService; sessionCleaner?: SessionCleaner; herdrContinue?: HerdrContinue; env?: NodeJS.ProcessEnv; permissionTimeoutMs?: number; deterministicMatcher?: typeof matchDeterministicRoute; deterministicExecutor?: DeterministicExecutor } = {}
   ) {
     this.#emit = emit;
     this.#history = options.history ?? new HistoryStore();
@@ -103,6 +110,8 @@ export class OmaPilotBroker {
     this.#herdrContinue = options.herdrContinue ?? continueInHerdr;
     this.#env = options.env ?? process.env;
     this.#permissionTimeoutMs = options.permissionTimeoutMs ?? 60_000;
+    this.#deterministicMatcher = options.deterministicMatcher ?? matchDeterministicRoute;
+    this.#deterministicExecutor = options.deterministicExecutor ?? createDeterministicExecutor();
   }
 
   async handle(command: BrokerCommand): Promise<boolean> {
@@ -302,11 +311,95 @@ export class OmaPilotBroker {
   async #submit(command: Extract<BrokerCommand, { type: "submit" }>): Promise<void> {
     if (this.#submissions.has(command.id)) { this.#error("duplicate_id", "This request is already running", false, command.id); return; }
     this.#submissions.add(command.id);
+
     try {
+      const route = this.#deterministicMatcher(command.question);
+
+      if (route !== undefined) {
+        this.#emit({
+          type: "state",
+          id: command.id,
+          state: "preparing",
+          message: "Running locally…"
+        });
+
+        try {
+          const result = await this.#deterministicExecutor.execute(route);
+
+          if (result.handled) {
+            await this.#completeDeterministic(command, result.message);
+            return;
+          }
+        } catch {
+          await this.#contextAttachments.discardMany(
+            (command.contextAttachments ?? []).map((value) => value.id)
+          );
+          this.#error(
+            "agent_failed",
+            "The local action could not be completed",
+            true,
+            command.id
+          );
+          return;
+        }
+      }
+
       await this.#submitOnce(command);
     } finally {
       this.#submissions.delete(command.id);
     }
+  }
+
+  async #completeDeterministic(
+    command: Extract<BrokerCommand, { type: "submit" }>,
+    answer: string
+  ): Promise<void> {
+    this.#emit({
+      type: "state",
+      id: command.id,
+      state: "streaming",
+      message: "Completed locally"
+    });
+
+    this.#emit({
+      type: "content",
+      id: command.id,
+      delta: answer
+    });
+
+    const chat: ChatRecord = {
+      schemaVersion: 1,
+      id: randomUUID(),
+      createdAt: new Date().toISOString(),
+      title: command.question.replaceAll(/\s+/g, " ").slice(0, 80),
+      provider: command.provider,
+      question: command.question,
+      answer,
+      images: [],
+      session: {
+        ...(this.#env.HOME === undefined ? {} : { cwd: this.#env.HOME }),
+        resumable: false,
+        resumeKind: "transcript"
+      }
+    };
+
+    const evicted = await this.#history.save(chat);
+    await this.#cleanupSessions(evicted);
+
+    this.#emit({
+      type: "complete",
+      chat: presentChat(chat)
+    });
+
+    this.#emit({
+      type: "state",
+      id: command.id,
+      state: "idle"
+    });
+
+    await this.#contextAttachments.discardMany(
+      (command.contextAttachments ?? []).map((value) => value.id)
+    );
   }
 
   async #submitOnce(command: Extract<BrokerCommand, { type: "submit" }>): Promise<void> {
