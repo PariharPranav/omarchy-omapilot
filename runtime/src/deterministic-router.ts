@@ -12,6 +12,12 @@ export type DeterministicRoute =
       family: "workspace";
       operation: "focus";
       workspace: number;
+    }
+  | {
+      family: "window";
+      operation: "move_to_workspace";
+      target: "active";
+      workspace: number;
     };
 
 function compact(value: string): string {
@@ -76,6 +82,21 @@ export function matchDeterministicRoute(
       return {
         family: "workspace",
         operation: "focus",
+        workspace
+      };
+    }
+  }
+
+  const activeWindowMove = /^(?:move|send)\s+(?:(?:this|current)(?:\s+window)?)\s+to\s+workspace\s+([1-9][0-9]?)$/u.exec(normalized);
+
+  if (activeWindowMove !== null) {
+    const workspace = Number(activeWindowMove[1]);
+
+    if (workspace >= 1 && workspace <= 99) {
+      return {
+        family: "window",
+        operation: "move_to_workspace",
+        target: "active",
         workspace
       };
     }

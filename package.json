@@ -11,7 +11,7 @@
     "preview": "bash scripts/render-preview.sh",
     "typecheck": "tsc --noEmit",
     "lint": "eslint 'runtime/**/*.ts' --max-warnings=0",
-    "test": "vitest run",
+    "test": "env -u OMAPILOT_PLUGIN_ROOT vitest run",
     "check": "npm run typecheck && npm run lint && npm run test && npm run build"
   },
   "dependencies": {

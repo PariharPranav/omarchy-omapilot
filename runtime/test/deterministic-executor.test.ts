@@ -5,6 +5,7 @@ import type {
   AppOpenInput,
   DesktopActionService,
   InstalledApp,
+  WindowActionInput,
   WorkspaceActionInput
 } from "../src/tools/desktop.js";
 
@@ -21,9 +22,11 @@ const receipt: ActionReceipt = {
 function fakeActions(): {
   actions: DesktopActionService;
   opened: AppOpenInput[];
+  windows: WindowActionInput[];
   workspaces: WorkspaceActionInput[];
 } {
   const opened: AppOpenInput[] = [];
+  const windows: WindowActionInput[] = [];
   const workspaces: WorkspaceActionInput[] = [];
 
   const actions: DesktopActionService = {
@@ -32,7 +35,8 @@ function fakeActions(): {
       return Promise.resolve(receipt);
     },
 
-    windowAction() {
+    windowAction(input) {
+      windows.push(input);
       return Promise.resolve(receipt);
     },
 
@@ -42,7 +46,7 @@ function fakeActions(): {
     }
   };
 
-  return { actions, opened, workspaces };
+  return { actions, opened, windows, workspaces };
 }
 
 describe("deterministic executor", () => {
@@ -344,6 +348,91 @@ describe("deterministic executor", () => {
       expect(result.message).toBe(
         "No active media player could handle that action."
       );
+    }
+  });
+
+  it("moves the active window using live desktop context", async () => {
+    const { actions, windows } = fakeActions();
+
+    const executor = createDeterministicExecutor(
+      actions,
+      () => [],
+      {},
+      {
+        control(action) {
+          return Promise.resolve({
+            ok: true,
+            action,
+            method: action
+          });
+        }
+      },
+      () => Promise.resolve(undefined),
+      () => Promise.resolve({
+        activeWindow: {
+          address: "0xabc123",
+          pid: 4242,
+          workspace: 1,
+          class: "foot"
+        },
+        activeWorkspace: 1
+      })
+    );
+
+    const result = await executor.execute({
+      family: "window",
+      operation: "move_to_workspace",
+      target: "active",
+      workspace: 2
+    });
+
+    expect(result.handled).toBe(true);
+
+    expect(windows).toEqual([
+      {
+        action: "move_to_workspace",
+        address: "0xabc123",
+        pid: 4242,
+        workspace: 2,
+        follow: false
+      }
+    ]);
+  });
+
+  it("keeps an active-window command local when no window is focused", async () => {
+    const { actions, windows } = fakeActions();
+
+    const executor = createDeterministicExecutor(
+      actions,
+      () => [],
+      {},
+      {
+        control(action) {
+          return Promise.resolve({
+            ok: true,
+            action,
+            method: action
+          });
+        }
+      },
+      () => Promise.resolve(undefined),
+      () => Promise.resolve({
+        activeWorkspace: 1
+      })
+    );
+
+    const result = await executor.execute({
+      family: "window",
+      operation: "move_to_workspace",
+      target: "active",
+      workspace: 2
+    });
+
+    expect(result.handled).toBe(true);
+    expect(windows).toHaveLength(0);
+
+    if (result.handled) {
+      expect(result.message).toBe("No active window is available.");
     }
   });
 

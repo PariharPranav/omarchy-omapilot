@@ -14,6 +14,10 @@ import {
   type MediaActionService
 } from "./tools/media.js";
 import type { DeterministicRoute } from "./deterministic-router.js";
+import {
+  resolveLiveContext,
+  type LiveContextResolver
+} from "./live-context.js";
 
 export type DeterministicExecutionResult =
   | {
@@ -97,7 +101,9 @@ export function createDeterministicExecutor(
     }
   ),
   resolveSystemApp: ResolveSystemApp = (query, signal) =>
-    resolveSystemAppQuery(query, runDesktopCommand, signal)
+    resolveSystemAppQuery(query, runDesktopCommand, signal),
+  liveContext: LiveContextResolver = (signal) =>
+    resolveLiveContext(runDesktopCommand, signal)
 ): DeterministicExecutor {
   return {
     async execute(
@@ -172,6 +178,41 @@ export function createDeterministicExecutor(
             changed: true,
             verified: true
           }
+        };
+      }
+
+      if (route.family === "window") {
+        const context = await liveContext(signal);
+        const window = context.activeWindow;
+
+        if (window === undefined) {
+          return {
+            handled: true,
+            message: "No active window is available.",
+            receipt: {
+              action: route.operation,
+              target: {},
+              requested: { workspace: route.workspace },
+              before: undefined,
+              after: undefined,
+              changed: false,
+              verified: true
+            }
+          };
+        }
+
+        const receipt = await actions.windowAction({
+          action: "move_to_workspace",
+          address: window.address,
+          pid: window.pid,
+          workspace: route.workspace,
+          follow: false
+        }, signal);
+
+        return {
+          handled: true,
+          message: `Moved current window to workspace ${route.workspace}.`,
+          receipt
         };
       }
 

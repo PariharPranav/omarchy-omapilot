@@ -30,4 +30,26 @@ describe("deterministic router", () => {
   ])("falls through for %s", (input) => {
     expect(matchDeterministicRoute(input)).toBeUndefined();
   });
+  it("routes an explicit active-window workspace move", () => {
+    expect(matchDeterministicRoute("move this to workspace 2")).toEqual({
+      family: "window",
+      operation: "move_to_workspace",
+      target: "active",
+      workspace: 2
+    });
+
+    expect(matchDeterministicRoute("move current window to workspace 7")).toEqual({
+      family: "window",
+      operation: "move_to_workspace",
+      target: "active",
+      workspace: 7
+    });
+  });
+
+  it("does not guess the target of a named-window move", () => {
+    expect(
+      matchDeterministicRoute("move terminal to workspace 3")
+    ).toBeUndefined();
+  });
+
 });
