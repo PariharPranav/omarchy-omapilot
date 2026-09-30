@@ -136,7 +136,7 @@ export type DesktopState = {
   windows: DesktopWindow[];
 };
 
-type AppOpenInput = {
+export type AppOpenInput = {
   kind: "desktop" | "cli";
   id: string;
   mode?: "focus_or_launch" | "focus_existing" | "new_window";
@@ -160,7 +160,7 @@ export type WorkspaceActionInput = {
 };
 
 type Command = { file: "hyprctl"; args: string[] };
-type ActionReceipt = {
+export type ActionReceipt = {
   action: string;
   target: Record<string, unknown>;
   requested: Record<string, unknown>;
@@ -1055,6 +1055,40 @@ export function desktopToolTitle(name: string, input: Record<string, unknown>): 
   return undefined;
 }
 
+export type DesktopActionService = {
+  openApp(input: AppOpenInput, signal?: AbortSignal): Promise<ActionReceipt>;
+  windowAction(input: WindowActionInput, signal?: AbortSignal): Promise<ActionReceipt>;
+  workspaceAction(input: WorkspaceActionInput, signal?: AbortSignal): Promise<ActionReceipt>;
+};
+
+export function createDesktopActionService(
+  run: DesktopCommandRunner = runDesktopCommand,
+  env: NodeJS.ProcessEnv = process.env,
+  launch: DesktopCommandRunner = run === runDesktopCommand ? launchDesktopCommand : run
+): DesktopActionService {
+  const knownAppWindows: KnownAppWindows = new Map();
+  let appOpenQueue: Promise<void> = Promise.resolve();
+
+  return {
+    async openApp(input, signal) {
+      const operation = appOpenQueue.then(
+        () => openApp(run, launch, env, input, knownAppWindows, signal),
+        () => openApp(run, launch, env, input, knownAppWindows, signal)
+      );
+      appOpenQueue = operation.then(() => undefined, () => undefined);
+      return operation;
+    },
+
+    windowAction(input, signal) {
+      return executeWindowAction(run, input, signal);
+    },
+
+    workspaceAction(input, signal) {
+      return executeWorkspaceAction(run, input, signal);
+    }
+  };
+}
+
 export function createPersonalAssistantTools(
   run: DesktopCommandRunner = runDesktopCommand,
   env: NodeJS.ProcessEnv = process.env,
@@ -1067,8 +1101,7 @@ export function createPersonalAssistantTools(
   ToolDefinition<typeof workspaceActionParameters>,
   ToolDefinition<typeof omarchyCommandsParameters>
 ] {
-  const knownAppWindows: KnownAppWindows = new Map();
-  let appOpenQueue: Promise<void> = Promise.resolve();
+  const actions = createDesktopActionService(run, env, launch);
   const appCatalog: ToolDefinition<typeof appCatalogParameters> = {
     name: "app_catalog",
     label: "Find installed apps",
@@ -1092,12 +1125,7 @@ export function createPersonalAssistantTools(
     promptSnippet: "Focus or launch a discovered app with internal verification",
     parameters: appOpenParameters,
     async execute(_toolCallId, input, signal) {
-      const operation = appOpenQueue.then(
-        () => openApp(run, launch, env, input, knownAppWindows, signal),
-        () => openApp(run, launch, env, input, knownAppWindows, signal)
-      );
-      appOpenQueue = operation.then(() => undefined, () => undefined);
-      try { return receiptResult(await operation); }
+      try { return receiptResult(await actions.openApp(input, signal)); }
       catch (error) { return toolFailure("Opening the app", error); }
     }
   };
@@ -1121,7 +1149,7 @@ export function createPersonalAssistantTools(
     promptSnippet: "Perform and verify one exact window action",
     parameters: windowActionParameters,
     async execute(_toolCallId, input, signal) {
-      try { return receiptResult(await executeWindowAction(run, input, signal)); }
+      try { return receiptResult(await actions.windowAction(input, signal)); }
       catch (error) { return toolFailure("The window action", error); }
     }
   };
@@ -1132,7 +1160,7 @@ export function createPersonalAssistantTools(
     promptSnippet: "Perform and verify one exact workspace action",
     parameters: workspaceActionParameters,
     async execute(_toolCallId, input, signal) {
-      try { return receiptResult(await executeWorkspaceAction(run, input, signal)); }
+      try { return receiptResult(await actions.workspaceAction(input, signal)); }
       catch (error) { return toolFailure("The workspace action", error); }
     }
   };
