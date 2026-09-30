@@ -35,6 +35,7 @@ import {
   reviewDesktopToolInput
 } from "./tools/desktop.js";
 import { createWebHandoffTool, webHandoffApproval, webHandoffTitle } from "./tools/web-handoff.js";
+import { createMediaActionService, mediaMethod } from "./tools/media.js";
 import {
   capabilityReviewableInput,
   capabilityToolRisk,
@@ -525,17 +526,14 @@ export function normalizeOpenUrl(raw: string): string {
 }
 
 export function omarchyMediaMethod(action: string): string {
-  const methods: Record<string, string> = {
-    play_pause: "playPause",
-    play: "play",
-    pause: "pause",
-    next: "next",
-    previous: "previous",
-    source_next: "sourceNext",
-    source_previous: "sourcePrevious"
-  };
-  const method = methods[action];
-  if (method === undefined) throw new BrokerPiError("invalid_media_action", "That media action is unavailable", false);
+  const method = mediaMethod(action);
+  if (method === undefined) {
+    throw new BrokerPiError(
+      "invalid_media_action",
+      "That media action is unavailable",
+      false
+    );
+  }
   return method;
 }
 
@@ -562,6 +560,7 @@ function commandToolError(action: string, error: unknown): { content: Array<{ ty
 export function createDesktopTools(run: DesktopCommandRunner = runDesktopCommand): [
   ToolDefinition<typeof openUrlParameters>, ToolDefinition<typeof mediaControlParameters>
 ] {
+  const media = createMediaActionService(run);
   const openUrl: ToolDefinition<typeof openUrlParameters> = {
     name: "open_url",
     label: "Open URL",
@@ -584,22 +583,25 @@ export function createDesktopTools(run: DesktopCommandRunner = runDesktopCommand
     parameters: mediaControlParameters,
     async execute(_toolCallId, input, signal) {
       try {
-        const method = omarchyMediaMethod(input.action);
-        const result = await run("omarchy-shell", ["media", method], signal);
-        const output = `${result.stdout}\n${result.stderr}`.trim();
-        if (output === "unhandled") return {
+        const result = await media.control(input.action, signal);
+
+        if (!result.ok && result.reason === "unhandled") return {
           content: [{ type: "text", text: "No active media player could handle that action." }],
           details: { action: input.action }, isError: true
         };
-        if (output !== "ok") return {
+
+        if (!result.ok) return {
           content: [{ type: "text", text: "The Omarchy media service returned an unexpected result." }],
           details: { action: input.action }, isError: true
         };
+
         return {
           content: [{ type: "text", text: `Media action ${input.action} completed.` }],
           details: { action: input.action }
         };
-      } catch (error) { return commandToolError("The media action", error); }
+      } catch (error) {
+        return commandToolError("The media action", error);
+      }
     }
   };
   return [openUrl, mediaControl];
