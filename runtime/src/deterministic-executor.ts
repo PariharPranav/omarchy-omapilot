@@ -7,6 +7,10 @@ import {
   createDesktopActionService,
   discoverInstalledApps
 } from "./tools/desktop.js";
+import {
+  createMediaActionService,
+  type MediaActionService
+} from "./tools/media.js";
 import type { DeterministicRoute } from "./deterministic-router.js";
 
 export type DeterministicExecutionResult =
@@ -51,7 +55,13 @@ function selectApp(query: string, apps: InstalledApp[]): InstalledApp | undefine
 export function createDeterministicExecutor(
   actions: DesktopActionService = createDesktopActionService(),
   discoverApps: DiscoverApps = discoverInstalledApps,
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  media: MediaActionService = createMediaActionService(
+    async (file, args, signal) => {
+      const { runDesktopCommand } = await import("./tools/desktop.js");
+      return runDesktopCommand(file, args, signal);
+    }
+  )
 ) {
   return {
     async execute(
@@ -79,6 +89,31 @@ export function createDeterministicExecutor(
           handled: true,
           message: `${app.name} is ready.`,
           receipt
+        };
+      }
+
+      if (route.family === "media") {
+        const result = await media.control(route.operation, signal);
+
+        if (!result.ok) {
+          return {
+            handled: false,
+            reason: "unsupported_route"
+          };
+        }
+
+        return {
+          handled: true,
+          message: `Media ${route.operation}.`,
+          receipt: {
+            action: `media_${route.operation}`,
+            target: { media: true },
+            requested: { action: route.operation },
+            before: undefined,
+            after: { ok: true },
+            changed: true,
+            verified: true
+          }
         };
       }
 

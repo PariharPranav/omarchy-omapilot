@@ -193,13 +193,24 @@ describe("deterministic executor", () => {
     ]);
   });
 
-  it("does not pretend unsupported route families were handled", async () => {
+  it("controls media through the shared media service", async () => {
     const { actions } = fakeActions();
+    const calls: string[] = [];
 
     const executor = createDeterministicExecutor(
       actions,
       () => [],
-      {}
+      {},
+      {
+        control(action) {
+          calls.push(action);
+          return Promise.resolve({
+            ok: true,
+            action,
+            method: action
+          });
+        }
+      }
     );
 
     const result = await executor.execute({
@@ -207,9 +218,7 @@ describe("deterministic executor", () => {
       operation: "pause"
     });
 
-    expect(result).toEqual({
-      handled: false,
-      reason: "unsupported_route"
-    });
+    expect(result.handled).toBe(true);
+    expect(calls).toEqual(["pause"]);
   });
 });
