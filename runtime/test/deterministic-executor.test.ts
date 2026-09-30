@@ -1,0 +1,215 @@
+import { describe, expect, it } from "vitest";
+import { createDeterministicExecutor } from "../src/deterministic-executor.js";
+import type {
+  ActionReceipt,
+  AppOpenInput,
+  DesktopActionService,
+  InstalledApp,
+  WorkspaceActionInput
+} from "../src/tools/desktop.js";
+
+const receipt: ActionReceipt = {
+  action: "test",
+  target: {},
+  requested: {},
+  before: undefined,
+  after: undefined,
+  changed: true,
+  verified: true
+};
+
+function fakeActions(): {
+  actions: DesktopActionService;
+  opened: AppOpenInput[];
+  workspaces: WorkspaceActionInput[];
+} {
+  const opened: AppOpenInput[] = [];
+  const workspaces: WorkspaceActionInput[] = [];
+
+  const actions: DesktopActionService = {
+    openApp(input) {
+      opened.push(input);
+      return Promise.resolve(receipt);
+    },
+
+    windowAction() {
+      return Promise.resolve(receipt);
+    },
+
+    workspaceAction(input) {
+      workspaces.push(input);
+      return Promise.resolve(receipt);
+    }
+  };
+
+  return { actions, opened, workspaces };
+}
+
+describe("deterministic executor", () => {
+  it("opens one unambiguous discovered app through the shared desktop service", async () => {
+    const { actions, opened } = fakeActions();
+
+    const apps: InstalledApp[] = [
+      {
+        kind: "desktop",
+        id: "spotify",
+        name: "Spotify"
+      }
+    ];
+
+    const executor = createDeterministicExecutor(
+      actions,
+      () => apps,
+      {}
+    );
+
+    const result = await executor.execute({
+      family: "app",
+      operation: "open",
+      query: "Spotify"
+    });
+
+    expect(result.handled).toBe(true);
+    expect(opened).toEqual([
+      {
+        kind: "desktop",
+        id: "spotify",
+        mode: "focus_or_launch"
+      }
+    ]);
+  });
+
+  it("selects one exact app from multiple search results", async () => {
+    const { actions, opened } = fakeActions();
+
+    const apps: InstalledApp[] = [
+      {
+        kind: "desktop",
+        id: "spotify",
+        name: "Spotify"
+      },
+      {
+        kind: "desktop",
+        id: "spotify-player-extra",
+        name: "Spotify Player Extra"
+      }
+    ];
+
+    const executor = createDeterministicExecutor(
+      actions,
+      () => apps,
+      {}
+    );
+
+    const result = await executor.execute({
+      family: "app",
+      operation: "open",
+      query: "Spotify"
+    });
+
+    expect(result.handled).toBe(true);
+    expect(opened).toHaveLength(1);
+    expect(opened[0]?.id).toBe("spotify");
+  });
+
+  it("falls through when app discovery returns no matches", async () => {
+    const { actions, opened } = fakeActions();
+
+    const executor = createDeterministicExecutor(
+      actions,
+      () => [],
+      {}
+    );
+
+    const result = await executor.execute({
+      family: "app",
+      operation: "open",
+      query: "Unknown App"
+    });
+
+    expect(result).toEqual({
+      handled: false,
+      reason: "app_not_found"
+    });
+    expect(opened).toHaveLength(0);
+  });
+
+  it("falls through when app discovery remains ambiguous", async () => {
+    const { actions, opened } = fakeActions();
+
+    const apps: InstalledApp[] = [
+      {
+        kind: "desktop",
+        id: "editor-one",
+        name: "Editor One"
+      },
+      {
+        kind: "desktop",
+        id: "editor-two",
+        name: "Editor Two"
+      }
+    ];
+
+    const executor = createDeterministicExecutor(
+      actions,
+      () => apps,
+      {}
+    );
+
+    const result = await executor.execute({
+      family: "app",
+      operation: "open",
+      query: "Editor"
+    });
+
+    expect(result).toEqual({
+      handled: false,
+      reason: "app_ambiguous"
+    });
+    expect(opened).toHaveLength(0);
+  });
+
+  it("focuses a workspace through the shared desktop service", async () => {
+    const { actions, workspaces } = fakeActions();
+
+    const executor = createDeterministicExecutor(
+      actions,
+      () => [],
+      {}
+    );
+
+    const result = await executor.execute({
+      family: "workspace",
+      operation: "focus",
+      workspace: 4
+    });
+
+    expect(result.handled).toBe(true);
+    expect(workspaces).toEqual([
+      {
+        action: "focus",
+        workspace: 4
+      }
+    ]);
+  });
+
+  it("does not pretend unsupported route families were handled", async () => {
+    const { actions } = fakeActions();
+
+    const executor = createDeterministicExecutor(
+      actions,
+      () => [],
+      {}
+    );
+
+    const result = await executor.execute({
+      family: "media",
+      operation: "pause"
+    });
+
+    expect(result).toEqual({
+      handled: false,
+      reason: "unsupported_route"
+    });
+  });
+});
