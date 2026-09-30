@@ -221,4 +221,37 @@ describe("deterministic executor", () => {
     expect(result.handled).toBe(true);
     expect(calls).toEqual(["pause"]);
   });
+  it("keeps recognized media commands local when no player handles them", async () => {
+    const { actions } = fakeActions();
+
+    const executor = createDeterministicExecutor(
+      actions,
+      () => [],
+      {},
+      {
+        control(action) {
+          return Promise.resolve({
+            ok: false,
+            action,
+            method: action,
+            reason: "unhandled"
+          });
+        }
+      }
+    );
+
+    const result = await executor.execute({
+      family: "media",
+      operation: "pause"
+    });
+
+    expect(result.handled).toBe(true);
+
+    if (result.handled) {
+      expect(result.message).toBe(
+        "No active media player could handle that action."
+      );
+    }
+  });
+
 });

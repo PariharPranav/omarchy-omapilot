@@ -95,11 +95,24 @@ export function createDeterministicExecutor(
       if (route.family === "media") {
         const result = await media.control(route.operation, signal);
 
-        if (!result.ok) {
+        if (!result.ok && result.reason === "unhandled") {
           return {
-            handled: false,
-            reason: "unsupported_route"
+            handled: true,
+            message: "No active media player could handle that action.",
+            receipt: {
+              action: `media_${route.operation}`,
+              target: { media: true },
+              requested: { action: route.operation },
+              before: undefined,
+              after: { ok: false, reason: "unhandled" },
+              changed: false,
+              verified: true
+            }
           };
+        }
+
+        if (!result.ok) {
+          throw new Error("Unexpected media control result");
         }
 
         return {
