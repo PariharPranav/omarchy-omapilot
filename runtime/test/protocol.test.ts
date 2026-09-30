@@ -291,7 +291,7 @@ describe("NDJSON protocol", () => {
     await new Promise((resolveExit) => child.once("close", resolveExit));
   }, 20_000);
 
-  it("routes action-shaped prompts through ACP without broker hardcoding", async () => {
+  it("routes unsupported action-shaped prompts through ACP after deterministic miss", async () => {
     const state = await mkdtemp(join(tmpdir(), "omapilot-action-prompt-")); roots.push(state);
     const audit = join(state, "prompt-audit.txt");
     const child = spawn(brokerExecutable(), [], {
@@ -308,12 +308,12 @@ describe("NDJSON protocol", () => {
     createInterface({ input: child.stdout }).on("line", (line) => events.push(parseObject(line)));
     child.stdin.write('{"type":"initialize","protocolVersion":2,"harness":"codex"}\n');
     await until(() => events.some((event) => event.type === "ready"));
-    child.stdin.write('{"type":"submit","id":"action-shaped","question":"open zoom","provider":"codex"}\n');
+    child.stdin.write('{"type":"submit","id":"action-shaped","question":"move terminal to workspace 3","provider":"codex"}\n');
     await until(() => events.some((event) => event.type === "complete"));
     expect(await readFile(audit, "utf8")).toBe("prompt\n");
     expect(events.some((event) => event.type === "permission" && JSON.stringify(event).includes("local_action"))).toBe(false);
     const complete = events.find((event) => event.type === "complete");
-    expect(complete).toMatchObject({ type: "complete", chat: { question: "open zoom" } });
+    expect(complete).toMatchObject({ type: "complete", chat: { question: "move terminal to workspace 3" } });
     child.stdin.end('{"type":"shutdown"}\n');
     await new Promise((resolveExit) => child.once("close", resolveExit));
   }, 20_000);

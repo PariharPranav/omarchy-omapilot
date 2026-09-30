@@ -1,11 +1,13 @@
 import type {
   ActionReceipt,
   DesktopActionService,
+  DesktopCommandRunner,
   InstalledApp
 } from "./tools/desktop.js";
 import {
   createDesktopActionService,
-  discoverInstalledApps
+  discoverInstalledApps,
+  runDesktopCommand
 } from "./tools/desktop.js";
 import {
   createMediaActionService,
@@ -49,7 +51,33 @@ function selectApp(query: string, apps: InstalledApp[]): InstalledApp | undefine
       || normalizeAppIdentity(app.id.split(".").at(-1) ?? "") === wanted;
   });
 
+  const exactDesktop = exact.filter((app) => app.kind === "desktop");
+
+  if (exactDesktop.length === 1) return exactDesktop[0];
   return exact.length === 1 ? exact[0] : undefined;
+}
+
+type ResolveSystemApp = (
+  query: string,
+  signal?: AbortSignal
+) => Promise<string | undefined>;
+
+async function resolveSystemAppQuery(
+  query: string,
+  run: DesktopCommandRunner,
+  signal?: AbortSignal
+): Promise<string | undefined> {
+  if (query.trim().toLocaleLowerCase() !== "terminal") {
+    return undefined;
+  }
+
+  try {
+    const result = await run("omarchy-default-terminal", [], signal);
+    const id = result.stdout.trim();
+    return id === "" ? undefined : id;
+  } catch {
+    return undefined;
+  }
 }
 
 export type DeterministicExecutor = {
@@ -65,10 +93,11 @@ export function createDeterministicExecutor(
   env: NodeJS.ProcessEnv = process.env,
   media: MediaActionService = createMediaActionService(
     async (file, args, signal) => {
-      const { runDesktopCommand } = await import("./tools/desktop.js");
       return runDesktopCommand(file, args, signal);
     }
-  )
+  ),
+  resolveSystemApp: ResolveSystemApp = (query, signal) =>
+    resolveSystemAppQuery(query, runDesktopCommand, signal)
 ): DeterministicExecutor {
   return {
     async execute(
@@ -77,7 +106,16 @@ export function createDeterministicExecutor(
     ): Promise<DeterministicExecutionResult> {
       if (route.family === "app") {
         const apps = discoverApps(route.query, "all", 10, env);
-        const app = selectApp(route.query, apps);
+        let app = selectApp(route.query, apps);
+
+        if (app === undefined) {
+          const systemApp = await resolveSystemApp(route.query, signal);
+
+          if (systemApp !== undefined) {
+            const resolvedApps = discoverApps(systemApp, "desktop", 10, env);
+            app = selectApp(systemApp, resolvedApps);
+          }
+        }
 
         if (app === undefined) {
           return {

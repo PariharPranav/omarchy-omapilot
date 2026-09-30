@@ -112,6 +112,99 @@ describe("deterministic executor", () => {
     expect(opened[0]?.id).toBe("spotify");
   });
 
+  it("prefers an exact desktop app over a duplicate CLI identity", async () => {
+    const { actions, opened } = fakeActions();
+
+    const apps: InstalledApp[] = [
+      {
+        kind: "cli",
+        id: "spotify",
+        name: "spotify"
+      },
+      {
+        kind: "desktop",
+        id: "spotify",
+        name: "Spotify"
+      }
+    ];
+
+    const executor = createDeterministicExecutor(
+      actions,
+      () => apps,
+      {}
+    );
+
+    const result = await executor.execute({
+      family: "app",
+      operation: "open",
+      query: "Spotify"
+    });
+
+    expect(result.handled).toBe(true);
+    expect(opened).toEqual([
+      {
+        kind: "desktop",
+        id: "spotify",
+        mode: "focus_or_launch"
+      }
+    ]);
+  });
+
+  it("resolves the configured Omarchy terminal instead of guessing one", async () => {
+    const { actions, opened } = fakeActions();
+
+    const foot: InstalledApp = {
+      kind: "desktop",
+      id: "foot",
+      name: "Foot",
+      description: "Terminal"
+    };
+
+    const ghostty: InstalledApp = {
+      kind: "desktop",
+      id: "com.mitchellh.ghostty",
+      name: "Ghostty",
+      description: "A terminal emulator"
+    };
+
+    const executor = createDeterministicExecutor(
+      actions,
+      (query, kind) => {
+        if (query === "terminal") return [foot, ghostty];
+        if (query === "foot" && kind === "desktop") return [foot];
+        return [];
+      },
+      {},
+      {
+        control(action) {
+          return Promise.resolve({
+            ok: true,
+            action,
+            method: action
+          });
+        }
+      },
+      (query) => Promise.resolve(
+        query === "terminal" ? "foot" : undefined
+      )
+    );
+
+    const result = await executor.execute({
+      family: "app",
+      operation: "open",
+      query: "terminal"
+    });
+
+    expect(result.handled).toBe(true);
+    expect(opened).toEqual([
+      {
+        kind: "desktop",
+        id: "foot",
+        mode: "focus_or_launch"
+      }
+    ]);
+  });
+
   it("falls through when app discovery returns no matches", async () => {
     const { actions, opened } = fakeActions();
 
