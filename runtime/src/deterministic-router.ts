@@ -18,6 +18,11 @@ export type DeterministicRoute =
       operation: "move_to_workspace";
       target: "active";
       workspace: number;
+    }
+  | {
+      family: "window";
+      operation: "close";
+      target: "active";
     };
 
 function compact(value: string): string {
@@ -100,6 +105,14 @@ export function matchDeterministicRoute(
         workspace
       };
     }
+  }
+
+  if (/^close\s+(?:this(?:\s+window)?|current\s+window)$/u.test(normalized)) {
+    return {
+      family: "window",
+      operation: "close",
+      target: "active"
+    };
   }
 
   const openMatch = /^(?:open|launch|start)\s+(.+)$/iu.exec(input);

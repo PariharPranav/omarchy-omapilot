@@ -182,41 +182,57 @@ export function createDeterministicExecutor(
       }
 
       if (route.family === "window") {
-        const context = await liveContext(signal);
-        const window = context.activeWindow;
+      const context = await liveContext(signal);
+      const window = context.activeWindow;
 
-        if (window === undefined) {
-          return {
-            handled: true,
-            message: "No active window is available.",
-            receipt: {
-              action: route.operation,
-              target: {},
-              requested: { workspace: route.workspace },
-              before: undefined,
-              after: undefined,
-              changed: false,
-              verified: true
-            }
-          };
-        }
+      if (window === undefined) {
+        return {
+          handled: true,
+          message: "No active window is available.",
+          receipt: {
+            action: route.operation,
+            target: {},
+            requested: route.operation === "move_to_workspace"
+              ? { workspace: route.workspace }
+              : { action: "close" },
+            before: undefined,
+            after: undefined,
+            changed: false,
+            verified: true
+          }
+        };
+      }
 
+      if (route.operation === "close") {
         const receipt = await actions.windowAction({
-          action: "move_to_workspace",
+          action: "close",
           address: window.address,
-          pid: window.pid,
-          workspace: route.workspace,
-          follow: false
+          pid: window.pid
         }, signal);
 
         return {
           handled: true,
-          message: `Moved current window to workspace ${route.workspace}.`,
+          message: "Closed current window.",
           receipt
         };
       }
 
-      if (route.family === "workspace") {
+      const receipt = await actions.windowAction({
+        action: "move_to_workspace",
+        address: window.address,
+        pid: window.pid,
+        workspace: route.workspace,
+        follow: false
+      }, signal);
+
+      return {
+        handled: true,
+        message: `Moved current window to workspace ${route.workspace}.`,
+        receipt
+      };
+    }
+
+    if (route.family === "workspace") {
         const receipt = await actions.workspaceAction({
           action: "focus",
           workspace: route.workspace

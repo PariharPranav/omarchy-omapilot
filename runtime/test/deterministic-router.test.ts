@@ -46,6 +46,26 @@ describe("deterministic router", () => {
     });
   });
 
+  it("routes an explicit active-window close", () => {
+    expect(matchDeterministicRoute("close this")).toEqual({
+      family: "window",
+      operation: "close",
+      target: "active"
+    });
+
+    expect(matchDeterministicRoute("close this window")).toEqual({
+      family: "window",
+      operation: "close",
+      target: "active"
+    });
+
+    expect(matchDeterministicRoute("close current window")).toEqual({
+      family: "window",
+      operation: "close",
+      target: "active"
+    });
+  });
+
   it("does not guess the target of a named-window move", () => {
     expect(
       matchDeterministicRoute("move terminal to workspace 3")

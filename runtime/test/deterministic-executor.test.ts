@@ -436,4 +436,90 @@ describe("deterministic executor", () => {
     }
   });
 
+
+  it("closes the active window using live desktop context", async () => {
+    const { actions, windows } = fakeActions();
+
+    const executor = createDeterministicExecutor(
+      actions,
+      () => [],
+      {},
+      {
+        control(action) {
+          return Promise.resolve({
+            ok: true,
+            action,
+            method: action
+          });
+        }
+      },
+      () => Promise.resolve(undefined),
+      () => Promise.resolve({
+        activeWindow: {
+          address: "0xabc123",
+          pid: 4242,
+          workspace: 1,
+          class: "foot"
+        },
+        activeWorkspace: 1
+      })
+    );
+
+    const result = await executor.execute({
+      family: "window",
+      operation: "close",
+      target: "active"
+    });
+
+    expect(result.handled).toBe(true);
+
+    expect(windows).toEqual([
+      {
+        action: "close",
+        address: "0xabc123",
+        pid: 4242
+      }
+    ]);
+
+    if (result.handled) {
+      expect(result.message).toBe("Closed current window.");
+    }
+  });
+
+  it("keeps an active-window close local when no window is focused", async () => {
+    const { actions, windows } = fakeActions();
+
+    const executor = createDeterministicExecutor(
+      actions,
+      () => [],
+      {},
+      {
+        control(action) {
+          return Promise.resolve({
+            ok: true,
+            action,
+            method: action
+          });
+        }
+      },
+      () => Promise.resolve(undefined),
+      () => Promise.resolve({
+        activeWorkspace: 1
+      })
+    );
+
+    const result = await executor.execute({
+      family: "window",
+      operation: "close",
+      target: "active"
+    });
+
+    expect(result.handled).toBe(true);
+    expect(windows).toHaveLength(0);
+
+    if (result.handled) {
+      expect(result.message).toBe("No active window is available.");
+    }
+  });
+
 });
